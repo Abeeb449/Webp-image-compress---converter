@@ -415,7 +415,7 @@
 
   <ul class="list" id="list"></ul>
 
-  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: mobile-save</span></footer>
+  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: universal-download</span></footer>
 </div>
 
 <div class="modal-overlay hidden" id="compare-modal">
@@ -869,9 +869,11 @@
   }
 
   // Trigger a browser download for a blob. A fresh object URL is minted per
-  // download (and revoked shortly after) so repeated one-by-one downloads work
-  // reliably — reusing the long-lived blob URL that also backs the thumbnail
-  // and compare view can cause some browsers to ignore later downloads.
+  // download and kept alive long enough for the download to finish writing
+  // before being revoked — this is what lets repeated one-by-one downloads work
+  // across browsers (desktop and mobile alike). Reusing the long-lived blob URL
+  // that also backs the thumbnail/compare view, or removing the link too soon,
+  // can make some browsers ignore later downloads.
   function triggerDownload(blob, filename) {
     var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
@@ -884,47 +886,12 @@
     setTimeout(function () {
       if (link.parentNode) link.parentNode.removeChild(link);
       URL.revokeObjectURL(url);
-    }, 1500);
+    }, 30000);
   }
-
-  // Mobile browsers (iOS Safari in particular) only allow one programmatic
-  // download per user gesture, so clicking Download on several images only saves
-  // the first. Detect mobile-like devices so we can route them through the
-  // native share/save sheet, which works reliably for each image.
-  function isMobileLike() {
-    var ua = navigator.userAgent || '';
-    if (/Android|iPhone|iPod|iPad|Mobile|Tablet|Silk|Kindle/i.test(ua)) return true;
-    // Any touch device that reports as desktop (iPadOS, "Request Desktop Site",
-    // some Android browsers) — anything touch-capable that isn't Windows.
-    if ((navigator.maxTouchPoints || 0) > 0 && !/Windows NT/i.test(ua)) return true;
-    return false;
-  }
-
-  // Label the per-image action to match how it behaves on this device.
-  var SAVE_LABEL = isMobileLike() ? 'Save' : 'Download';
-  var SAVED_LABEL = isMobileLike() ? '✓ Saved' : '✓ Downloaded';
 
   function downloadItem(item) {
     if (!item.outputBlob) return;
-    var name = outputName(item);
-
-    // Mobile: open the native share/save sheet (Save to Photos / Files). Each
-    // call is its own gesture, so every image can be saved independently.
-    if (isMobileLike()) {
-      var file = null;
-      try {
-        file = new File([item.outputBlob], name, { type: item.outputBlob.type || 'image/webp' });
-      } catch (e) { file = null; }
-      if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file] })
-          .then(function () { item.downloaded = true; render(); })
-          .catch(function () { /* dismissed or unavailable: let the user retry */ });
-        return;
-      }
-    }
-
-    // Desktop (and mobile browsers without file sharing): direct download.
-    triggerDownload(item.outputBlob, name);
+    triggerDownload(item.outputBlob, outputName(item));
     item.downloaded = true;
     render();
   }
@@ -933,7 +900,7 @@
   function downloadAll() {
     items.filter(function (it) { return it.status === 'done'; })
       .forEach(function (item, idx) {
-        setTimeout(function () { downloadItem(item); }, idx * 250);
+        setTimeout(function () { downloadItem(item); }, idx * 300);
       });
   }
 
@@ -1272,14 +1239,14 @@
         if (item.downloaded) {
           var doneTag = document.createElement('span');
           doneTag.className = 'downloaded-tag';
-          doneTag.setAttribute('title', SAVED_LABEL);
-          doneTag.textContent = SAVED_LABEL;
+          doneTag.setAttribute('title', 'Downloaded');
+          doneTag.textContent = '✓ Downloaded';
           actions.appendChild(doneTag);
         } else {
           var dl = document.createElement('button');
           dl.className = 'download-btn';
           dl.type = 'button';
-          dl.textContent = SAVE_LABEL;
+          dl.textContent = 'Download';
           dl.addEventListener('click', function () { downloadItem(item); });
           actions.appendChild(dl);
         }
