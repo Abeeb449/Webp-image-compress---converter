@@ -184,6 +184,7 @@
   <div class="actions">
     <button class="btn btn-primary" id="convert-btn" disabled>Convert to WebP</button>
     <button class="btn btn-secondary hidden" id="download-all-btn">Download all</button>
+    <button class="btn btn-secondary hidden" id="download-zip-btn">Download ZIP</button>
     <button class="btn btn-secondary hidden" id="clear-btn">Clear</button>
   </div>
 
@@ -204,6 +205,7 @@
   // State
   var items = [];        // { id, file, name, inputSize, status, outputBlob, outputUrl, outputSize, message }
   var isConverting = false;
+  var isZipping = false;
   var idCounter = 0;
 
   // Elements
@@ -217,6 +219,7 @@
   var qualityValueEl = document.getElementById('quality-value');
   var convertBtn = document.getElementById('convert-btn');
   var downloadAllBtn = document.getElementById('download-all-btn');
+  var downloadZipBtn = document.getElementById('download-zip-btn');
   var clearBtn = document.getElementById('clear-btn');
   var summaryEl = document.getElementById('summary');
   var listEl = document.getElementById('list');
@@ -385,21 +388,175 @@
     chain.then(function () { isConverting = false; render(); });
   }
 
-  function downloadItem(item) {
-    if (!item.outputUrl) return;
+  // Map a source filename to its .webp output name.
+  function webpName(name) {
+    return name.replace(/\.(jpe?g|png)$/i, '') + '.webp';
+  }
+
+  // Trigger a browser download for a blob URL.
+  function triggerDownload(url, filename) {
     var link = document.createElement('a');
-    link.href = item.outputUrl;
-    link.download = item.name.replace(/\.(jpe?g|png)$/i, '') + '.webp';
+    link.href = url;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   }
 
+  function downloadItem(item) {
+    if (!item.outputUrl) return;
+    triggerDownload(item.outputUrl, webpName(item.name));
+  }
+
+  // Option 1: download each converted file individually.
   function downloadAll() {
     items.filter(function (it) { return it.status === 'done'; })
       .forEach(function (item, idx) {
         setTimeout(function () { downloadItem(item); }, idx * 150);
       });
+  }
+
+  // --- Minimal ZIP writer (STORE / no compression) -------------------------
+  // WebP is already compressed, so storing the bytes verbatim avoids a
+  // redundant deflate pass and keeps this dependency-free.
+  var crcTable = (function () {
+    var table = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      table[n] = c >>> 0;
+    }
+    return table;
+  })();
+
+  function crc32(bytes) {
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) {
+      crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[i]) & 0xFF];
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // MS-DOS date/time fields used by the ZIP format.
+  function dosDateTime(date) {
+    var time = ((date.getHours() & 0x1f) << 11) |
+               ((date.getMinutes() & 0x3f) << 5) |
+               ((Math.floor(date.getSeconds() / 2)) & 0x1f);
+    var day = (((date.getFullYear() - 1980) & 0x7f) << 9) |
+              (((date.getMonth() + 1) & 0xf) << 5) |
+              (date.getDate() & 0x1f);
+    return { time: time, date: day };
+  }
+
+  // entries: [{ name: string, data: Uint8Array }] -> Blob
+  function buildZip(entries) {
+    var now = dosDateTime(new Date());
+    var encoder = new TextEncoder();
+    var parts = [];      // local headers + data, in order
+    var central = [];    // central directory records
+    var offset = 0;
+
+    entries.forEach(function (entry) {
+      var nameBytes = encoder.encode(entry.name);
+      var data = entry.data;
+      var crc = crc32(data);
+      var size = data.length;
+
+      var local = new Uint8Array(30 + nameBytes.length);
+      var lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true); // local file header signature
+      lv.setUint16(4, 20, true);         // version needed
+      lv.setUint16(6, 0x0800, true);     // UTF-8 filename flag
+      lv.setUint16(8, 0, true);          // method: store
+      lv.setUint16(10, now.time, true);
+      lv.setUint16(12, now.date, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, size, true);      // compressed size
+      lv.setUint32(22, size, true);      // uncompressed size
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);         // extra field length
+      local.set(nameBytes, 30);
+      parts.push(local, data);
+
+      var cd = new Uint8Array(46 + nameBytes.length);
+      var cv = new DataView(cd.buffer);
+      cv.setUint32(0, 0x02014b50, true); // central dir header signature
+      cv.setUint16(4, 20, true);         // version made by
+      cv.setUint16(6, 20, true);         // version needed
+      cv.setUint16(8, 0x0800, true);     // UTF-8 filename flag
+      cv.setUint16(10, 0, true);         // method: store
+      cv.setUint16(12, now.time, true);
+      cv.setUint16(14, now.date, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, size, true);
+      cv.setUint32(24, size, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);         // extra
+      cv.setUint16(32, 0, true);         // comment
+      cv.setUint16(34, 0, true);         // disk number
+      cv.setUint16(36, 0, true);         // internal attrs
+      cv.setUint32(38, 0, true);         // external attrs
+      cv.setUint32(42, offset, true);    // local header offset
+      cd.set(nameBytes, 46);
+      central.push(cd);
+
+      offset += local.length + data.length;
+    });
+
+    var centralSize = central.reduce(function (s, c) { return s + c.length; }, 0);
+    var end = new Uint8Array(22);
+    var ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true);   // end of central dir signature
+    ev.setUint16(4, 0, true);            // disk number
+    ev.setUint16(6, 0, true);            // disk with central dir
+    ev.setUint16(8, entries.length, true);
+    ev.setUint16(10, entries.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true);      // central dir offset
+    ev.setUint16(20, 0, true);           // comment length
+
+    return new Blob(parts.concat(central, [end]), { type: 'application/zip' });
+  }
+
+  // Option 2: download all converted files bundled into a single .zip.
+  function downloadZip() {
+    var doneItems = items.filter(function (it) { return it.status === 'done'; });
+    if (!doneItems.length) return;
+
+    // Ensure unique names inside the archive (e.g. two "photo.webp").
+    var usedNames = {};
+    function uniqueName(base) {
+      var name = base;
+      var n = 1;
+      while (usedNames[name.toLowerCase()]) {
+        name = base.replace(/\.webp$/i, '') + ' (' + (n++) + ').webp';
+      }
+      usedNames[name.toLowerCase()] = true;
+      return name;
+    }
+
+    isZipping = true;
+    downloadZipBtn.disabled = true;
+    downloadZipBtn.textContent = 'Zipping…';
+
+    Promise.all(doneItems.map(function (item) {
+      return item.outputBlob.arrayBuffer().then(function (buf) {
+        return { name: uniqueName(webpName(item.name)), data: new Uint8Array(buf) };
+      });
+    })).then(function (entries) {
+      var zipBlob = buildZip(entries);
+      var url = URL.createObjectURL(zipBlob);
+      triggerDownload(url, 'webp-images.zip');
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    }).catch(function (err) {
+      showError('Could not create ZIP: ' + err.message);
+    }).then(function () {
+      isZipping = false;
+      downloadZipBtn.disabled = false;
+      downloadZipBtn.textContent = 'Download ZIP (' + doneItems.length + ')';
+    });
   }
 
   function removeItem(id) {
@@ -433,6 +590,12 @@
     convertBtn.textContent = isConverting ? 'Converting…' : 'Convert to WebP';
     downloadAllBtn.classList.toggle('hidden', doneItems.length === 0);
     downloadAllBtn.textContent = 'Download all (' + doneItems.length + ')';
+    downloadZipBtn.classList.toggle('hidden', doneItems.length === 0);
+    // Leave the ZIP button alone while it's actively zipping.
+    if (!isZipping) {
+      downloadZipBtn.disabled = isConverting;
+      downloadZipBtn.textContent = 'Download ZIP (' + doneItems.length + ')';
+    }
     clearBtn.classList.toggle('hidden', items.length === 0);
     clearBtn.disabled = isConverting;
 
@@ -554,6 +717,7 @@
 
   convertBtn.addEventListener('click', convertAll);
   downloadAllBtn.addEventListener('click', downloadAll);
+  downloadZipBtn.addEventListener('click', downloadZip);
   clearBtn.addEventListener('click', clearAll);
 
   // Clean up object URLs on unload.
