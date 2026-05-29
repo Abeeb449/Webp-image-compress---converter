@@ -238,6 +238,11 @@
     background: none; border: none; padding: 0; font-size: 14px;
     font-weight: 600; color: var(--black); text-decoration: underline; cursor: pointer;
   }
+  .downloaded-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 14px; font-weight: 600; color: var(--green);
+    white-space: nowrap;
+  }
   .remove-btn {
     background: none; border: none; padding: 0 4px; font-size: 20px;
     line-height: 1; color: #aaa; cursor: pointer;
@@ -292,9 +297,9 @@
     transform: translateX(-1px); pointer-events: none;
   }
   .compare-tag {
-    position: absolute; top: 8px; padding: 2px 8px; border-radius: 3px;
-    font-size: 11px; font-weight: 600; color: #fff;
-    background: rgba(0, 0, 0, 0.6); pointer-events: none;
+    position: absolute; top: 10px; padding: 4px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.03em; color: #fff;
+    background: #000; pointer-events: none;
   }
   .compare-tag-left { left: 8px; }
   .compare-tag-right { right: 8px; }
@@ -669,6 +674,7 @@
         outputBlob: null,
         outputUrl: null,
         outputSize: 0,
+        downloaded: false,
         message: ''
       });
     }
@@ -824,6 +830,9 @@
     var pending = items.filter(function (it) { return it.status !== 'done'; });
     if (!pending.length) return;
 
+    // Starting a new compression clears any "downloaded" ticks.
+    items.forEach(function (it) { it.downloaded = false; });
+
     isConverting = true;
     showError('');
     render();
@@ -858,26 +867,37 @@
     return item.name.replace(/\.(jpe?g|png)$/i, '') + '.' + ext;
   }
 
-  // Trigger a browser download for a blob URL.
-  function triggerDownload(url, filename) {
+  // Trigger a browser download for a blob. A fresh object URL is minted per
+  // download (and revoked shortly after) so repeated one-by-one downloads work
+  // reliably — reusing the long-lived blob URL that also backs the thumbnail
+  // and compare view can cause some browsers to ignore later downloads.
+  function triggerDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.rel = 'noopener';
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    setTimeout(function () {
+      if (link.parentNode) link.parentNode.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 1500);
   }
 
   function downloadItem(item) {
-    if (!item.outputUrl) return;
-    triggerDownload(item.outputUrl, outputName(item));
+    if (!item.outputBlob) return;
+    triggerDownload(item.outputBlob, outputName(item));
+    item.downloaded = true;
+    render();
   }
 
   // Option 1: download each converted file individually.
   function downloadAll() {
     items.filter(function (it) { return it.status === 'done'; })
       .forEach(function (item, idx) {
-        setTimeout(function () { downloadItem(item); }, idx * 150);
+        setTimeout(function () { downloadItem(item); }, idx * 250);
       });
   }
 
@@ -1015,9 +1035,7 @@
       });
     })).then(function (entries) {
       var zipBlob = buildZip(entries);
-      var url = URL.createObjectURL(zipBlob);
-      triggerDownload(url, 'webp-images.zip');
-      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      triggerDownload(zipBlob, 'webp-images.zip');
     }).catch(function (err) {
       showError('Could not create ZIP: ' + err.message);
     }).then(function () {
@@ -1215,12 +1233,20 @@
         cmp.addEventListener('click', function () { openCompare(item); });
         actions.appendChild(cmp);
 
-        var dl = document.createElement('button');
-        dl.className = 'download-btn';
-        dl.type = 'button';
-        dl.textContent = 'Download';
-        dl.addEventListener('click', function () { downloadItem(item); });
-        actions.appendChild(dl);
+        if (item.downloaded) {
+          var doneTag = document.createElement('span');
+          doneTag.className = 'downloaded-tag';
+          doneTag.setAttribute('title', 'Downloaded');
+          doneTag.textContent = '✓ Downloaded';
+          actions.appendChild(doneTag);
+        } else {
+          var dl = document.createElement('button');
+          dl.className = 'download-btn';
+          dl.type = 'button';
+          dl.textContent = 'Download';
+          dl.addEventListener('click', function () { downloadItem(item); });
+          actions.appendChild(dl);
+        }
       }
 
       var rm = document.createElement('button');
