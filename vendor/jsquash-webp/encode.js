@@ -39,12 +39,12 @@ export async function init(module, moduleOptionOverrides) {
         actualModule = undefined;
         actualOptions = module;
     }
-    if (await simd()) {
-        const webpEncoder = await import('./codec/enc/webp_enc_simd.js');
-        emscriptenModule = initEmscriptenModule(webpEncoder.default, actualModule, actualOptions);
-        return emscriptenModule;
+    // This build ships only the SIMD codec. If the browser lacks WebAssembly
+    // SIMD support, throw so the caller can fall back to another encoder.
+    if (!(await simd())) {
+        throw new Error('WebAssembly SIMD is required for the libwebp encoder');
     }
-    const webpEncoder = await import('./codec/enc/webp_enc.js');
+    const webpEncoder = await import('./codec/enc/webp_enc_simd.js');
     emscriptenModule = initEmscriptenModule(webpEncoder.default, actualModule, actualOptions);
     return emscriptenModule;
 }

@@ -261,7 +261,15 @@
   function loadEncoder() {
     if (encoderPromise) return encoderPromise;
     encoderPromise = import('./vendor/jsquash-webp/encode.js')
-      .then(function (mod) { encodeFn = mod.default; return encodeFn; })
+      .then(function (mod) {
+        // Probe with a 1x1 image so we fail fast and fall back if the wasm
+        // can't run here (e.g. a browser without WebAssembly SIMD support).
+        var probe = { data: new Uint8ClampedArray(4), width: 1, height: 1 };
+        return mod.default(probe, { quality: 50 }).then(function () {
+          encodeFn = mod.default;
+          return encodeFn;
+        });
+      })
       .catch(function (err) {
         console.warn('libwebp encoder unavailable, using canvas fallback:', err);
         encodeFn = null;
