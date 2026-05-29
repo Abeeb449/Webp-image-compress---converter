@@ -179,19 +179,6 @@
       <input type="range" id="quality" class="slider" min="1" max="100" value="80" />
       <span class="quality-value" id="quality-value">80</span>
     </div>
-    <label class="checkbox-row" style="margin: 20px 0;">
-      <input type="checkbox" id="resize" />
-      <span><strong>Resize large images</strong> &ndash; shrink oversized photos to cut file size much further</span>
-    </label>
-    <div class="slider-row disabled" id="maxdim-row">
-      <label class="slider-label" for="maxdim">Max width/height</label>
-      <select id="maxdim" class="slider" disabled>
-        <option value="1280">1280 px</option>
-        <option value="1920" selected>1920 px</option>
-        <option value="2560">2560 px</option>
-        <option value="3840">3840 px</option>
-      </select>
-    </div>
   </div>
 
   <div class="actions">
@@ -228,9 +215,6 @@
   var sliderRow = document.getElementById('slider-row');
   var qualityEl = document.getElementById('quality');
   var qualityValueEl = document.getElementById('quality-value');
-  var resizeEl = document.getElementById('resize');
-  var maxdimRow = document.getElementById('maxdim-row');
-  var maxdimEl = document.getElementById('maxdim');
   var convertBtn = document.getElementById('convert-btn');
   var downloadAllBtn = document.getElementById('download-all-btn');
   var clearBtn = document.getElementById('clear-btn');
@@ -267,33 +251,41 @@
     });
   }
 
-  // Convert a File to a WebP Blob using the canvas API.
-  function convertToWebp(file, opts) {
-    return loadImage(file).then(function (img) {
-      var w = img.naturalWidth;
-      var h = img.naturalHeight;
+  // Lazily load the real libwebp encoder (vendored from @jsquash/webp, the
+  // same codec family Squoosh uses). It is loaded once and reused. If it
+  // fails to load for any reason, we fall back to the browser's built-in
+  // canvas WebP encoder so conversion always works.
+  var encoderPromise = null;
+  var encodeFn = null; // resolved libwebp encode(), or null when unavailable
 
-      // Optionally downscale oversized images — the single biggest lever for
-      // shrinking output. Aspect ratio is preserved; only the longest side is
-      // capped, and we never upscale.
-      if (opts.resize && opts.maxDim > 0) {
-        var longest = Math.max(w, h);
-        if (longest > opts.maxDim) {
-          var scale = opts.maxDim / longest;
-          w = Math.round(w * scale);
-          h = Math.round(h * scale);
-        }
+  function loadEncoder() {
+    if (encoderPromise) return encoderPromise;
+    encoderPromise = import('./vendor/jsquash-webp/encode.js')
+      .then(function (mod) { encodeFn = mod.default; return encodeFn; })
+      .catch(function (err) {
+        console.warn('libwebp encoder unavailable, using canvas fallback:', err);
+        encodeFn = null;
+        return null;
+      });
+    return encoderPromise;
+  }
+
+  // Encode a fully-drawn canvas to a WebP Blob.
+  function encodeCanvas(canvas, opts) {
+    return loadEncoder().then(function (encode) {
+      if (encode) {
+        // Real libwebp path — gives genuine lossless and Squoosh-grade lossy.
+        var ctx = canvas.getContext('2d');
+        var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        var options = opts.lossless
+          ? { lossless: 1 }            // pixel-perfect, no quality loss
+          : { quality: opts.quality }; // high-quality lossy
+        return encode(imageData, options).then(function (buf) {
+          return new Blob([buf], { type: 'image/webp' });
+        });
       }
-
-      var canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      var ctx = canvas.getContext('2d');
-      // High-quality resampling keeps downscaled images crisp.
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, w, h);
-      if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
+      // Fallback: native canvas encoder. Note this cannot do true lossless,
+      // so the lossless option degrades to maximum-quality lossy here.
       var q = opts.lossless ? 1 : opts.quality / 100;
       return new Promise(function (resolve, reject) {
         canvas.toBlob(function (blob) {
@@ -301,6 +293,19 @@
           else reject(new Error('WebP not supported by this browser'));
         }, 'image/webp', q);
       });
+    });
+  }
+
+  // Convert a File to a WebP Blob at full resolution (no downscaling).
+  function convertToWebp(file, opts) {
+    return loadImage(file).then(function (img) {
+      var canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
+      return encodeCanvas(canvas, opts);
     });
   }
 
@@ -348,9 +353,7 @@
 
     var opts = {
       lossless: losslessEl.checked,
-      quality: Number(qualityEl.value),
-      resize: resizeEl.checked,
-      maxDim: Number(maxdimEl.value)
+      quality: Number(qualityEl.value)
     };
 
     var chain = Promise.resolve();
@@ -537,11 +540,6 @@
     qualityEl.disabled = losslessEl.checked;
   });
 
-  resizeEl.addEventListener('change', function () {
-    maxdimRow.classList.toggle('disabled', !resizeEl.checked);
-    maxdimEl.disabled = !resizeEl.checked;
-  });
-
   qualityEl.addEventListener('input', function () {
     qualityValueEl.textContent = qualityEl.value;
   });
@@ -556,6 +554,9 @@
   });
 
   render();
+
+  // Warm up the WebP encoder in the background so the first conversion is fast.
+  loadEncoder();
 })();
 </script>
 </body>
