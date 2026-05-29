@@ -76,7 +76,15 @@
   .dropzone:hover, .dropzone:focus-visible,
   .dropzone.dragging {
     border-color: var(--black);
-    background-color: #f0f0f0;
+    background-color: #f4f4f4;
+  }
+  .dropzone::before {
+    content: ""; display: block; width: 40px; height: 40px; margin: 0 auto 16px;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2240%22%20height%3D%2240%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%231a1a1a%22%20stroke-width%3D%221.6%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2015v4a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2v-4%22%2F%3E%3Cpolyline%20points%3D%227%209%2012%204%2017%209%22%2F%3E%3Cline%20x1%3D%2212%22%20y1%3D%224%22%20x2%3D%2212%22%20y2%3D%2216%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;
+    opacity: 0.45; transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .dropzone:hover::before, .dropzone.dragging::before {
+    opacity: 0.85; transform: translateY(-2px);
   }
   .file-input { display: none; }
   .drop-title { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
@@ -89,7 +97,8 @@
   /* Options */
   .options {
     margin-top: 32px; padding: 24px;
-    border: 1px solid var(--border); border-radius: 8px;
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   }
   .options-title {
     font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;
@@ -104,7 +113,45 @@
   .slider-row.disabled { opacity: 0.4; pointer-events: none; }
   .slider-label { font-size: 14px; min-width: 110px; }
   .slider { flex: 1; cursor: pointer; }
-  .quality-value { font-size: 14px; font-weight: 600; min-width: 28px; text-align: right; }
+  .quality-value {
+    font-size: 13px; font-weight: 600; min-width: 40px; text-align: center;
+    padding: 3px 0; border-radius: 5px; background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
+  /* Themed selects */
+  select.slider {
+    -webkit-appearance: none; appearance: none;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 36px 9px 12px; font-size: 14px;
+    color: var(--black); background-color: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2214%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23888%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%2F%3E%3C%2Fsvg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  select.slider:hover { border-color: var(--light-gray); }
+  select.slider:focus-visible {
+    outline: none; border-color: var(--black);
+    box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.1);
+  }
+
+  /* Themed quality range slider */
+  input[type="range"].slider {
+    -webkit-appearance: none; appearance: none;
+    height: 6px; border-radius: 3px; background: var(--border);
+  }
+  input[type="range"].slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--black); border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    cursor: pointer; transition: transform 0.1s ease;
+  }
+  input[type="range"].slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+  input[type="range"].slider::-moz-range-thumb {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--black); border: 2px solid #fff; cursor: pointer;
+  }
+  input[type="range"].slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--border); }
 
   /* Transform controls (rotate / flip) */
   .transform-controls { display: flex; align-items: center; gap: 8px; flex: 1; }
@@ -127,9 +174,16 @@
     transition: all 0.2s ease;
   }
   .btn-primary { background: var(--black); color: #fff; }
-  .btn-primary:hover:not(:disabled) { background: #444; border-color: #444; }
+  .btn-primary:hover:not(:disabled) {
+    background: #000; border-color: #000;
+    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  }
   .btn-secondary { background: #fff; color: var(--black); }
-  .btn-secondary:hover:not(:disabled) { border-color: #999; }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--black); transform: translateY(-1px);
+  }
+  .btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+  .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.18); }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .hidden { display: none !important; }
 
@@ -141,8 +195,11 @@
   .list { list-style: none; margin: 24px 0 0; padding: 0; }
   .list-item {
     display: flex; align-items: center; gap: 12px;
-    padding: 12px 0; border-bottom: 1px solid #eee;
+    padding: 12px 10px; margin: 0 -10px; border-radius: 8px;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.15s ease;
   }
+  .list-item:hover { background-color: var(--bg); }
   .list-item.dragging { opacity: 0.4; }
   .list-item.drop-before { box-shadow: inset 0 2px 0 0 var(--black); }
   .list-item.drop-after { box-shadow: inset 0 -2px 0 0 var(--black); }
@@ -184,14 +241,19 @@
   }
 
   /* Before/after comparison modal */
+  @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modalPop { from { opacity: 0; transform: scale(0.98) translateY(6px); } to { opacity: 1; transform: none; } }
   .modal-overlay {
     position: fixed; inset: 0; z-index: 50;
     background: rgba(0, 0, 0, 0.7);
     display: flex; align-items: center; justify-content: center; padding: 20px;
+    animation: overlayFade 0.15s ease;
   }
   .modal {
-    position: relative; background: #fff; border-radius: 8px; padding: 16px;
+    position: relative; background: #fff; border-radius: 10px; padding: 16px;
     max-width: 900px; width: 100%; max-height: 92vh; overflow: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    animation: modalPop 0.18s ease;
   }
   .modal-close {
     position: absolute; top: 6px; right: 12px; z-index: 2;
@@ -250,6 +312,10 @@
     .title { font-size: 26px; }
     .slider-row { flex-wrap: wrap; }
     .slider-label { min-width: 100%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
   }
 </style>
 </head>
