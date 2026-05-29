@@ -251,7 +251,60 @@
     });
   }
 
-  // Convert a File to a WebP Blob using the canvas API.
+  // Lazily load the real libwebp encoder (vendored from @jsquash/webp, the
+  // same codec family Squoosh uses). It is loaded once and reused. If it
+  // fails to load for any reason, we fall back to the browser's built-in
+  // canvas WebP encoder so conversion always works.
+  var encoderPromise = null;
+  var encodeFn = null; // resolved libwebp encode(), or null when unavailable
+
+  function loadEncoder() {
+    if (encoderPromise) return encoderPromise;
+    encoderPromise = import('./vendor/jsquash-webp/encode.js')
+      .then(function (mod) {
+        // Probe with a 1x1 image so we fail fast and fall back if the wasm
+        // can't run here (e.g. a browser without WebAssembly SIMD support).
+        var probe = { data: new Uint8ClampedArray(4), width: 1, height: 1 };
+        return mod.default(probe, { quality: 50 }).then(function () {
+          encodeFn = mod.default;
+          return encodeFn;
+        });
+      })
+      .catch(function (err) {
+        console.warn('libwebp encoder unavailable, using canvas fallback:', err);
+        encodeFn = null;
+        return null;
+      });
+    return encoderPromise;
+  }
+
+  // Encode a fully-drawn canvas to a WebP Blob.
+  function encodeCanvas(canvas, opts) {
+    return loadEncoder().then(function (encode) {
+      if (encode) {
+        // Real libwebp path — gives genuine lossless and Squoosh-grade lossy.
+        var ctx = canvas.getContext('2d');
+        var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        var options = opts.lossless
+          ? { lossless: 1 }            // pixel-perfect, no quality loss
+          : { quality: opts.quality }; // high-quality lossy
+        return encode(imageData, options).then(function (buf) {
+          return new Blob([buf], { type: 'image/webp' });
+        });
+      }
+      // Fallback: native canvas encoder. Note this cannot do true lossless,
+      // so the lossless option degrades to maximum-quality lossy here.
+      var q = opts.lossless ? 1 : opts.quality / 100;
+      return new Promise(function (resolve, reject) {
+        canvas.toBlob(function (blob) {
+          if (blob) resolve(blob);
+          else reject(new Error('WebP not supported by this browser'));
+        }, 'image/webp', q);
+      });
+    });
+  }
+
+  // Convert a File to a WebP Blob at full resolution (no downscaling).
   function convertToWebp(file, opts) {
     return loadImage(file).then(function (img) {
       var canvas = document.createElement('canvas');
@@ -260,13 +313,7 @@
       var ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
       if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
-      var q = opts.lossless ? 1 : opts.quality / 100;
-      return new Promise(function (resolve, reject) {
-        canvas.toBlob(function (blob) {
-          if (blob) resolve(blob);
-          else reject(new Error('WebP not supported by this browser'));
-        }, 'image/webp', q);
-      });
+      return encodeCanvas(canvas, opts);
     });
   }
 
@@ -312,7 +359,10 @@
     showError('');
     render();
 
-    var opts = { lossless: losslessEl.checked, quality: Number(qualityEl.value) };
+    var opts = {
+      lossless: losslessEl.checked,
+      quality: Number(qualityEl.value)
+    };
 
     var chain = Promise.resolve();
     pending.forEach(function (item) {
@@ -512,6 +562,9 @@
   });
 
   render();
+
+  // Warm up the WebP encoder in the background so the first conversion is fast.
+  loadEncoder();
 })();
 </script>
 </body>
