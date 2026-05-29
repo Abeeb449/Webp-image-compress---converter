@@ -391,12 +391,38 @@
     errorEl.classList.toggle('hidden', !msg);
   }
 
-  // Load a File into an Image element via object URL.
+  // Load a File into a drawable source descriptor: { source, width, height, close }.
+  // Prefers createImageBitmap with EXIF orientation applied, so rotated phone
+  // photos (JPEGs with an Orientation tag) come out upright deterministically.
+  // Falls back to an <img> element (which modern browsers also auto-orient).
   function loadImage(file) {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        return createImageBitmap(file, { imageOrientation: 'from-image' })
+          .then(function (bitmap) {
+            return {
+              source: bitmap, width: bitmap.width, height: bitmap.height,
+              close: function () { bitmap.close(); }
+            };
+          })
+          .catch(function () { return loadImageElement(file); });
+      } catch (e) {
+        return loadImageElement(file);
+      }
+    }
+    return loadImageElement(file);
+  }
+
+  function loadImageElement(file) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
-      img.onload = function () { img._objectUrl = url; resolve(img); };
+      img.onload = function () {
+        resolve({
+          source: img, width: img.naturalWidth, height: img.naturalHeight,
+          close: function () { URL.revokeObjectURL(url); }
+        });
+      };
       img.onerror = function () {
         URL.revokeObjectURL(url);
         reject(new Error('Failed to load image'));
@@ -474,9 +500,9 @@
 
   // Convert a File to the chosen format, applying rotate/flip/resize.
   function convertImage(file, opts) {
-    return loadImage(file).then(function (img) {
-      var w0 = img.naturalWidth;
-      var h0 = img.naturalHeight;
+    return loadImage(file).then(function (im) {
+      var w0 = im.width;
+      var h0 = im.height;
       var rot = ((opts.rotation % 360) + 360) % 360;
       var swap = (rot === 90 || rot === 270);
 
@@ -507,9 +533,9 @@
       ctx.rotate(rot * Math.PI / 180);
       var dw = w0 * f;
       var dh = h0 * f;
-      ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+      ctx.drawImage(im.source, -dw / 2, -dh / 2, dw, dh);
 
-      if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
+      im.close();
       return encodeCanvas(canvas, opts);
     });
   }
