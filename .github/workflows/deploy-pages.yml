@@ -11,6 +11,12 @@ permissions:
   pages: write
   id-token: write
 
+# Opt JavaScript actions into Node.js 24 now, ahead of the June 16 2026
+# deadline. This silences the Node 20 deprecation warning and also covers
+# actions/upload-artifact, which is bundled inside upload-pages-artifact.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Allow one concurrent deployment; cancel in-progress runs for newer pushes.
 concurrency:
   group: pages
@@ -24,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure Pages
         # enablement: true turns Pages on and sets the source to "GitHub Actions"
