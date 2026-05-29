@@ -114,9 +114,19 @@
   .slider-label { font-size: 14px; min-width: 110px; }
   .slider { flex: 1; cursor: pointer; }
   .quality-value {
-    font-size: 13px; font-weight: 600; min-width: 40px; text-align: center;
-    padding: 3px 0; border-radius: 5px; background: var(--bg);
-    border: 1px solid var(--border);
+    width: 52px; font-size: 13px; font-weight: 600; text-align: center;
+    padding: 5px 4px; border-radius: 5px; background: var(--bg);
+    border: 1px solid var(--border); color: var(--black);
+    font-family: inherit; cursor: text;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    -moz-appearance: textfield;
+  }
+  .quality-value::-webkit-outer-spin-button,
+  .quality-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .quality-value:hover { border-color: var(--light-gray); }
+  .quality-value:focus-visible {
+    outline: none; border-color: var(--black);
+    box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.1);
   }
 
   /* Themed selects */
@@ -361,7 +371,8 @@
     <div class="slider-row" id="slider-row">
       <label class="slider-label" for="quality">Quality (lossy)</label>
       <input type="range" id="quality" class="slider" min="1" max="100" value="80" />
-      <span class="quality-value" id="quality-value">80</span>
+      <input type="number" class="quality-value" id="quality-value" min="1" max="100" value="80"
+             inputmode="numeric" aria-label="Quality value (1-100)" />
     </div>
     <div class="slider-row">
       <label class="slider-label" for="maxdim">Resize</label>
@@ -1151,10 +1162,26 @@
   losslessEl.addEventListener('change', function () {
     sliderRow.classList.toggle('disabled', losslessEl.checked);
     qualityEl.disabled = losslessEl.checked;
+    qualityValueEl.disabled = losslessEl.checked;
   });
 
+  // Keep the slider and the editable number field in sync. The slider stays
+  // the source of truth (always a valid 1-100) used at convert time.
   qualityEl.addEventListener('input', function () {
-    qualityValueEl.textContent = qualityEl.value;
+    qualityValueEl.value = qualityEl.value;
+  });
+  // While typing, follow valid values live on the slider.
+  qualityValueEl.addEventListener('input', function () {
+    var v = parseInt(qualityValueEl.value, 10);
+    if (!isNaN(v) && v >= 1 && v <= 100) qualityEl.value = v;
+  });
+  // On commit (blur / Enter), clamp and normalize both controls.
+  qualityValueEl.addEventListener('change', function () {
+    var v = parseInt(qualityValueEl.value, 10);
+    if (isNaN(v)) v = Number(qualityEl.value);
+    v = Math.min(100, Math.max(1, v));
+    qualityEl.value = v;
+    qualityValueEl.value = v;
   });
 
   convertBtn.addEventListener('click', convertAll);
