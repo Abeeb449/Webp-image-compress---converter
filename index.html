@@ -597,8 +597,9 @@
     });
   }
 
-  // Convert a File to the chosen format, applying rotate/flip/resize.
-  function convertImage(file, opts) {
+  // Decode a File and draw it to a canvas with rotate/flip/resize applied.
+  // (The encode step is separate so it can run on the main thread or in a worker.)
+  function drawTransformed(file, opts) {
     return loadImage(file).then(function (im) {
       var w0 = im.width;
       var h0 = im.height;
@@ -635,6 +636,13 @@
       ctx.drawImage(im.source, -dw / 2, -dh / 2, dw, dh);
 
       im.close();
+      return canvas;
+    });
+  }
+
+  // Convert a File to the chosen format, applying rotate/flip/resize.
+  function convertImage(file, opts) {
+    return drawTransformed(file, opts).then(function (canvas) {
       return encodeCanvas(canvas, opts);
     });
   }
@@ -671,7 +679,146 @@
     render();
   }
 
-  // Convert all pending items sequentially.
+  function markDone(item, opts, blob) {
+    item.status = 'done';
+    item.format = opts.format;
+    item.outputBlob = blob;
+    item.outputUrl = URL.createObjectURL(blob);
+    item.outputSize = blob.size;
+    item.message = '';
+  }
+
+  function markError(item, err) {
+    item.status = 'error';
+    item.message = err.message;
+  }
+
+  // --- Parallel encode via a pool of module workers ------------------------
+  // The main thread still decodes + draws each image (identical pixels), then
+  // hands those pixels to a worker to encode. Same encoder + same options =>
+  // byte-identical output; this only parallelizes the CPU-heavy encode and
+  // keeps the UI responsive. Everything degrades to the main-thread path below
+  // if workers (or the wasm inside them) aren't available.
+  var workerPool = null;
+  var workerPoolTried = false;
+  var workerFormatOk = { webp: null, avif: null };
+
+  function makeWorker() {
+    var w = new Worker('./encode-worker.js', { type: 'module' });
+    var seq = 0;
+    var waiting = {};
+    w.onmessage = function (e) {
+      var m = e.data;
+      var p = waiting[m.id];
+      if (!p) return;
+      delete waiting[m.id];
+      if (m.ok) p.resolve(m.buffer);
+      else p.reject(new Error(m.error || 'Worker encode failed'));
+    };
+    w.onerror = function () {
+      Object.keys(waiting).forEach(function (k) {
+        waiting[k].reject(new Error('Worker error'));
+        delete waiting[k];
+      });
+    };
+    function send(format, lossless, quality, buffer, width, height) {
+      return new Promise(function (resolve, reject) {
+        var id = seq++;
+        waiting[id] = { resolve: resolve, reject: reject };
+        w.postMessage({
+          id: id, format: format, lossless: lossless, quality: quality,
+          data: buffer, width: width, height: height
+        }, [buffer]);
+      });
+    }
+    return {
+      encode: function (imageData, opts) {
+        return send(opts.format, opts.lossless, opts.quality,
+          imageData.data.buffer, imageData.width, imageData.height);
+      },
+      probe: function (format) {
+        // Encode a 1x1 image to confirm the wasm runs in this worker. Race
+        // against a timeout so a worker that never loads can't hang the batch.
+        var attempt = send(format, false, 50, new Uint8ClampedArray(4).buffer, 1, 1)
+          .then(function () { return true; })
+          .catch(function () { return false; });
+        var timeout = new Promise(function (resolve) {
+          setTimeout(function () { resolve(false); }, 8000);
+        });
+        return Promise.race([attempt, timeout]);
+      }
+    };
+  }
+
+  function getWorkerPool() {
+    if (workerPoolTried) return workerPool;
+    workerPoolTried = true;
+    if (typeof Worker === 'undefined') return null;
+    try {
+      var cores = navigator.hardwareConcurrency || 4;
+      var size = Math.max(1, Math.min(cores - 1, 4));
+      var arr = [];
+      for (var i = 0; i < size; i++) arr.push(makeWorker());
+      workerPool = arr;
+    } catch (e) {
+      workerPool = null;
+    }
+    return workerPool;
+  }
+
+  // Resolve true only if a worker can actually encode the given format here.
+  function ensureWorkerFormat(format) {
+    if (workerFormatOk[format] !== null) return Promise.resolve(workerFormatOk[format]);
+    var pool = getWorkerPool();
+    if (!pool) { workerFormatOk[format] = false; return Promise.resolve(false); }
+    return pool[0].probe(format).then(function (ok) {
+      workerFormatOk[format] = ok;
+      return ok;
+    }).catch(function () { workerFormatOk[format] = false; return false; });
+  }
+
+  // Draw on the main thread, encode in a worker; fall back to the main-thread
+  // encoder for this item if the worker encode fails.
+  function convertImageInWorker(item, opts, worker) {
+    return drawTransformed(item.file, opts).then(function (canvas) {
+      var ctx = canvas.getContext('2d');
+      var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return worker.encode(imageData, opts).then(function (buf) {
+        return new Blob([buf], { type: FORMATS[opts.format].mime });
+      }).catch(function () {
+        return encodeCanvas(canvas, opts);
+      });
+    });
+  }
+
+  function runWorkerPool(pending, opts) {
+    var idx = 0;
+    function lane(worker) {
+      if (idx >= pending.length) return Promise.resolve();
+      var item = pending[idx++];
+      return convertImageInWorker(item, opts, worker)
+        .then(function (blob) { markDone(item, opts, blob); render(); })
+        .catch(function (err) { markError(item, err); render(); })
+        .then(function () { return lane(worker); });
+    }
+    return Promise.all(workerPool.map(lane));
+  }
+
+  // Original main-thread path: one image at a time.
+  function runSequential(pending, opts) {
+    var chain = Promise.resolve();
+    pending.forEach(function (item) {
+      chain = chain.then(function () {
+        return convertImage(item.file, opts).then(function (blob) {
+          markDone(item, opts, blob); render();
+        }).catch(function (err) {
+          markError(item, err); render();
+        });
+      });
+    });
+    return chain;
+  }
+
   function convertAll() {
     if (isConverting) return;
     var pending = items.filter(function (it) { return it.status !== 'done'; });
@@ -691,26 +838,18 @@
       flipV: flipV
     };
 
-    var chain = Promise.resolve();
-    pending.forEach(function (item) {
-      chain = chain.then(function () {
-        return convertImage(item.file, opts).then(function (blob) {
-          item.status = 'done';
-          item.format = opts.format;
-          item.outputBlob = blob;
-          item.outputUrl = URL.createObjectURL(blob);
-          item.outputSize = blob.size;
-          item.message = '';
-          render();
-        }).catch(function (err) {
-          item.status = 'error';
-          item.message = err.message;
-          render();
-        });
-      });
-    });
+    var finish = function () { isConverting = false; render(); };
 
-    chain.then(function () { isConverting = false; render(); });
+    // Use the worker pool only for batches (a single cold worker can be slower
+    // than the already-warm main-thread encoder). Probe gates the rest.
+    if (pending.length >= 2) {
+      ensureWorkerFormat(opts.format).then(function (ok) {
+        if (ok && workerPool) runWorkerPool(pending, opts).then(finish);
+        else runSequential(pending, opts).then(finish);
+      });
+    } else {
+      runSequential(pending, opts).then(finish);
+    }
   }
 
   // Map a source filename to its output name, using the item's chosen format.
