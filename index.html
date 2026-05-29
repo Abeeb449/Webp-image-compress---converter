@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
 <title>Image to WebP &amp; AVIF Converter</title>
 <meta name="description" content="Compress and convert JPG and PNG images to WebP or AVIF in your browser. Batch convert up to 20 images at once with lossless and quality options." />
 
@@ -414,7 +415,7 @@
 
   <ul class="list" id="list"></ul>
 
-  <footer>Runs entirely in your browser. No images are uploaded anywhere.</footer>
+  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: mobile-save</span></footer>
 </div>
 
 <div class="modal-overlay hidden" id="compare-modal">
@@ -892,10 +893,10 @@
   // native share/save sheet, which works reliably for each image.
   function isMobileLike() {
     var ua = navigator.userAgent || '';
-    if (/Android|iPhone|iPod/i.test(ua)) return true;
-    if (/iPad/i.test(ua)) return true;
-    // iPadOS reports as desktop Safari but exposes touch points.
-    if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;
+    if (/Android|iPhone|iPod|iPad|Mobile|Tablet|Silk|Kindle/i.test(ua)) return true;
+    // Any touch device that reports as desktop (iPadOS, "Request Desktop Site",
+    // some Android browsers) — anything touch-capable that isn't Windows.
+    if ((navigator.maxTouchPoints || 0) > 0 && !/Windows NT/i.test(ua)) return true;
     return false;
   }
 
