@@ -84,6 +84,18 @@
   .slider { flex: 1; cursor: pointer; }
   .quality-value { font-size: 14px; font-weight: 600; min-width: 28px; text-align: right; }
 
+  /* Transform controls (rotate / flip) */
+  .transform-controls { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .xform-btn {
+    width: 38px; height: 38px; flex-shrink: 0;
+    border: 1px solid var(--light-gray); border-radius: 4px;
+    background: #fff; color: var(--black); font-size: 18px; line-height: 1;
+    cursor: pointer; transition: all 0.15s ease;
+  }
+  .xform-btn:hover { border-color: var(--black); }
+  .xform-btn.active { background: var(--black); color: #fff; border-color: var(--black); }
+  .xform-state { font-size: 13px; color: #888; margin-left: 4px; }
+
   /* Buttons */
   .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
   .btn {
@@ -190,6 +202,28 @@
       <input type="range" id="quality" class="slider" min="1" max="100" value="80" />
       <span class="quality-value" id="quality-value">80</span>
     </div>
+    <div class="slider-row">
+      <label class="slider-label" for="maxdim">Resize</label>
+      <select id="maxdim" class="slider">
+        <option value="0" selected>No resize (original size)</option>
+        <option value="3840">Max 3840 px (longest side)</option>
+        <option value="2560">Max 2560 px (longest side)</option>
+        <option value="1920">Max 1920 px (longest side)</option>
+        <option value="1280">Max 1280 px (longest side)</option>
+        <option value="1024">Max 1024 px (longest side)</option>
+        <option value="512">Max 512 px (longest side)</option>
+      </select>
+    </div>
+    <div class="slider-row">
+      <span class="slider-label">Rotate &amp; flip</span>
+      <div class="transform-controls">
+        <button type="button" class="xform-btn" id="rotate-left" aria-label="Rotate left 90 degrees" title="Rotate left">&#8634;</button>
+        <button type="button" class="xform-btn" id="rotate-right" aria-label="Rotate right 90 degrees" title="Rotate right">&#8635;</button>
+        <button type="button" class="xform-btn" id="flip-h" aria-label="Flip horizontal" aria-pressed="false" title="Flip horizontal">&#8596;</button>
+        <button type="button" class="xform-btn" id="flip-v" aria-label="Flip vertical" aria-pressed="false" title="Flip vertical">&#8597;</button>
+        <span class="xform-state" id="xform-state">none</span>
+      </div>
+    </div>
   </div>
 
   <div class="actions">
@@ -217,6 +251,9 @@
   var items = [];        // { id, file, name, inputSize, status, outputBlob, outputUrl, outputSize, message }
   var isConverting = false;
   var isZipping = false;
+  var rotation = 0;        // 0 | 90 | 180 | 270 (degrees clockwise)
+  var flipH = false;
+  var flipV = false;
   var idCounter = 0;
 
   // Elements
@@ -230,6 +267,12 @@
   var sliderRow = document.getElementById('slider-row');
   var qualityEl = document.getElementById('quality');
   var qualityValueEl = document.getElementById('quality-value');
+  var maxdimEl = document.getElementById('maxdim');
+  var rotateLeftBtn = document.getElementById('rotate-left');
+  var rotateRightBtn = document.getElementById('rotate-right');
+  var flipHBtn = document.getElementById('flip-h');
+  var flipVBtn = document.getElementById('flip-v');
+  var xformStateEl = document.getElementById('xform-state');
   var convertBtn = document.getElementById('convert-btn');
   var downloadAllBtn = document.getElementById('download-all-btn');
   var downloadZipBtn = document.getElementById('download-zip-btn');
@@ -334,14 +377,43 @@
     });
   }
 
-  // Convert a File to the chosen format at full resolution (no downscaling).
+  // Convert a File to the chosen format, applying rotate/flip/resize.
   function convertImage(file, opts) {
     return loadImage(file).then(function (img) {
+      var w0 = img.naturalWidth;
+      var h0 = img.naturalHeight;
+      var rot = ((opts.rotation % 360) + 360) % 360;
+      var swap = (rot === 90 || rot === 270);
+
+      // Oriented dimensions (after rotation, before resize).
+      var ow = swap ? h0 : w0;
+      var oh = swap ? w0 : h0;
+
+      // Resize factor: cap the longest side, never upscale.
+      var f = 1;
+      if (opts.maxDim > 0) {
+        var longest = Math.max(ow, oh);
+        if (longest > opts.maxDim) f = opts.maxDim / longest;
+      }
+
+      var cw = Math.max(1, Math.round(ow * f));
+      var ch = Math.max(1, Math.round(oh * f));
+
       var canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      canvas.width = cw;
+      canvas.height = ch;
       var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      // Draw centered, applying flip (screen space) then rotation.
+      ctx.translate(cw / 2, ch / 2);
+      ctx.scale(opts.flipH ? -1 : 1, opts.flipV ? -1 : 1);
+      ctx.rotate(rot * Math.PI / 180);
+      var dw = w0 * f;
+      var dh = h0 * f;
+      ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+
       if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
       return encodeCanvas(canvas, opts);
     });
@@ -392,7 +464,11 @@
     var opts = {
       format: formatEl.value,
       lossless: losslessEl.checked,
-      quality: Number(qualityEl.value)
+      quality: Number(qualityEl.value),
+      maxDim: Number(maxdimEl.value),
+      rotation: rotation,
+      flipH: flipH,
+      flipV: flipV
     };
 
     var chain = Promise.resolve();
@@ -748,6 +824,36 @@
     // ready by the time the user clicks Convert.
     if (isAvif) loadEncoder('avif');
     render();
+  });
+
+  // Reflect the current rotate/flip state in the controls.
+  function updateTransformState() {
+    flipHBtn.classList.toggle('active', flipH);
+    flipHBtn.setAttribute('aria-pressed', flipH ? 'true' : 'false');
+    flipVBtn.classList.toggle('active', flipV);
+    flipVBtn.setAttribute('aria-pressed', flipV ? 'true' : 'false');
+    var parts = [];
+    if (rotation) parts.push(rotation + '°');
+    if (flipH) parts.push('flip H');
+    if (flipV) parts.push('flip V');
+    xformStateEl.textContent = parts.length ? parts.join(', ') : 'none';
+  }
+
+  rotateLeftBtn.addEventListener('click', function () {
+    rotation = (rotation + 270) % 360;
+    updateTransformState();
+  });
+  rotateRightBtn.addEventListener('click', function () {
+    rotation = (rotation + 90) % 360;
+    updateTransformState();
+  });
+  flipHBtn.addEventListener('click', function () {
+    flipH = !flipH;
+    updateTransformState();
+  });
+  flipVBtn.addEventListener('click', function () {
+    flipV = !flipV;
+    updateTransformState();
   });
 
   losslessEl.addEventListener('change', function () {
