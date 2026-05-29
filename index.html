@@ -161,6 +161,69 @@
     margin-top: 60px;
   }
 
+  /* Before/after comparison modal */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal {
+    position: relative; background: #fff; border-radius: 8px; padding: 16px;
+    max-width: 900px; width: 100%; max-height: 92vh; overflow: auto;
+  }
+  .modal-close {
+    position: absolute; top: 6px; right: 12px; z-index: 2;
+    background: none; border: none; font-size: 30px; line-height: 1;
+    color: #888; cursor: pointer;
+  }
+  .modal-close:hover { color: var(--black); }
+  .compare {
+    position: relative; line-height: 0; margin: 8px auto 0;
+    background:
+      linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%) 0 0/20px 20px,
+      linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%) 10px 10px/20px 20px,
+      #fff;
+  }
+  .compare-img {
+    display: block; max-width: 100%; max-height: 72vh;
+    width: auto; height: auto; margin: 0 auto;
+  }
+  .compare-before {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  .compare-divider {
+    position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+    background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+    transform: translateX(-1px); pointer-events: none;
+  }
+  .compare-tag {
+    position: absolute; top: 8px; padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; font-weight: 600; color: #fff;
+    background: rgba(0, 0, 0, 0.6); pointer-events: none;
+  }
+  .compare-tag-left { left: 8px; }
+  .compare-tag-right { right: 8px; }
+  .compare-range {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+    background: transparent; -webkit-appearance: none; appearance: none;
+    cursor: ew-resize;
+  }
+  .compare-range::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 28px; height: 28px; border-radius: 50%;
+    background: #fff; border: 2px solid var(--black); cursor: ew-resize;
+  }
+  .compare-range::-moz-range-thumb {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #fff; border: 2px solid var(--black); cursor: ew-resize;
+  }
+  .compare-meta {
+    margin-top: 14px; font-size: 14px; line-height: 1.5;
+    display: flex; gap: 32px; flex-wrap: wrap;
+  }
+  .compare-meta strong { display: block; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #888; margin-bottom: 2px; }
+
   @media (max-width: 600px) {
     .title { font-size: 26px; }
     .slider-row { flex-wrap: wrap; }
@@ -250,6 +313,22 @@
   <footer>Runs entirely in your browser. No images are uploaded anywhere.</footer>
 </div>
 
+<div class="modal-overlay hidden" id="compare-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Before and after comparison">
+    <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
+    <div class="compare" id="compare">
+      <img class="compare-img compare-after" id="compare-after" alt="Converted result" />
+      <img class="compare-img compare-before" id="compare-before" alt="Original image" />
+      <div class="compare-divider" id="compare-divider"></div>
+      <span class="compare-tag compare-tag-left">Before</span>
+      <span class="compare-tag compare-tag-right">After</span>
+      <input type="range" class="compare-range" id="compare-range"
+             min="0" max="100" value="50" aria-label="Drag to compare before and after" />
+    </div>
+    <div class="compare-meta" id="compare-meta"></div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -300,6 +379,12 @@
   }
 
   function createId() { return 'img-' + Date.now() + '-' + (idCounter++); }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
 
   function showError(msg) {
     errorEl.textContent = msg;
@@ -817,6 +902,9 @@
         img.className = 'thumb';
         img.src = item.outputUrl;
         img.alt = item.name;
+        img.style.cursor = 'pointer';
+        img.title = 'Click to compare before / after';
+        img.addEventListener('click', function () { openCompare(item); });
         li.appendChild(img);
       } else {
         var ph = document.createElement('div');
@@ -856,6 +944,13 @@
       actions.className = 'item-actions';
 
       if (item.status === 'done') {
+        var cmp = document.createElement('button');
+        cmp.className = 'download-btn';
+        cmp.type = 'button';
+        cmp.textContent = 'Compare';
+        cmp.addEventListener('click', function () { openCompare(item); });
+        actions.appendChild(cmp);
+
         var dl = document.createElement('button');
         dl.className = 'download-btn';
         dl.type = 'button';
@@ -952,6 +1047,64 @@
   downloadAllBtn.addEventListener('click', downloadAll);
   downloadZipBtn.addEventListener('click', downloadZip);
   clearBtn.addEventListener('click', clearAll);
+
+  // --- Before/after comparison modal ---
+  var compareModal = document.getElementById('compare-modal');
+  var compareAfter = document.getElementById('compare-after');
+  var compareBefore = document.getElementById('compare-before');
+  var compareDivider = document.getElementById('compare-divider');
+  var compareRange = document.getElementById('compare-range');
+  var compareMeta = document.getElementById('compare-meta');
+  var compareClose = document.getElementById('compare-close');
+  var compareBeforeUrl = null;
+
+  function setCompareSplit(x) {
+    var inset = 'inset(0 ' + (100 - x) + '% 0 0)';
+    compareBefore.style.clipPath = inset;
+    compareBefore.style.webkitClipPath = inset;
+    compareDivider.style.left = x + '%';
+  }
+
+  function openCompare(item) {
+    if (!item.outputUrl) return;
+    if (compareBeforeUrl) URL.revokeObjectURL(compareBeforeUrl);
+    compareBeforeUrl = URL.createObjectURL(item.file);
+    compareBefore.src = compareBeforeUrl;
+    compareAfter.src = item.outputUrl;
+    compareRange.value = 50;
+    setCompareSplit(50);
+
+    var ext = (FORMATS[item.format] || FORMATS.webp).ext.toUpperCase();
+    var s = item.inputSize > 0 ? Math.round((1 - item.outputSize / item.inputSize) * 100) : 0;
+    var savings = (s >= 0 ? '−' : '+') + Math.abs(s) + '%';
+    var savingsClass = s >= 0 ? 'savings-positive' : 'savings-negative';
+    compareMeta.innerHTML =
+      '<div><strong>Before</strong>' + escapeHtml(item.name) + '<br>' +
+        formatBytes(item.inputSize) + '</div>' +
+      '<div><strong>After</strong>' + ext + '<br>' +
+        formatBytes(item.outputSize) +
+        ' <span class="' + savingsClass + '">(' + savings + ')</span></div>';
+
+    compareModal.classList.remove('hidden');
+  }
+
+  function closeCompare() {
+    compareModal.classList.add('hidden');
+    compareAfter.removeAttribute('src');
+    compareBefore.removeAttribute('src');
+    if (compareBeforeUrl) { URL.revokeObjectURL(compareBeforeUrl); compareBeforeUrl = null; }
+  }
+
+  compareRange.addEventListener('input', function () {
+    setCompareSplit(Number(compareRange.value));
+  });
+  compareClose.addEventListener('click', closeCompare);
+  compareModal.addEventListener('click', function (e) {
+    if (e.target === compareModal) closeCompare();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !compareModal.classList.contains('hidden')) closeCompare();
+  });
 
   // Clean up object URLs on unload.
   window.addEventListener('beforeunload', function () {
