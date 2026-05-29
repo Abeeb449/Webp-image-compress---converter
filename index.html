@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Image to WebP Converter</title>
-<meta name="description" content="Compress and convert JPG and PNG images to WebP in your browser. Batch convert up to 20 images at once with lossless and quality options." />
+<title>Image to WebP &amp; AVIF Converter</title>
+<meta name="description" content="Compress and convert JPG and PNG images to WebP or AVIF in your browser. Batch convert up to 20 images at once with lossless and quality options." />
 <style>
   :root {
     --black: #1a1a1a;
@@ -149,9 +149,9 @@
 <body>
 <div class="root">
   <div class="intro">
-    <h1 class="title">Image to WebP Converter</h1>
+    <h1 class="title">Image to WebP &amp; AVIF Converter</h1>
     <p class="subtitle">
-      Compress and convert your JPG and PNG images to WebP. Add up to
+      Compress and convert your JPG and PNG images to WebP or AVIF. Add up to
       20 images at once. Everything runs in your browser &ndash; your
       images are never uploaded to a server.
     </p>
@@ -169,7 +169,18 @@
   <p class="error hidden" id="error"></p>
 
   <div class="options">
-    <h2 class="options-title">WebP options</h2>
+    <h2 class="options-title">Output options</h2>
+    <div class="slider-row" id="format-row">
+      <label class="slider-label" for="format">Output format</label>
+      <select id="format" class="slider">
+        <option value="webp" selected>WebP</option>
+        <option value="avif">AVIF (smaller, slower)</option>
+      </select>
+    </div>
+    <p class="drop-hint hidden" id="avif-note" style="margin: 8px 0 16px;">
+      AVIF usually compresses smaller than WebP. It downloads a one-time
+      ~3.4&nbsp;MB encoder and is slower to convert.
+    </p>
     <label class="checkbox-row">
       <input type="checkbox" id="lossless" />
       <span><strong>Lossless</strong> &ndash; preserve perfect quality (larger files)</span>
@@ -213,6 +224,8 @@
   var fileInput = document.getElementById('file-input');
   var countEl = document.getElementById('count');
   var errorEl = document.getElementById('error');
+  var formatEl = document.getElementById('format');
+  var avifNote = document.getElementById('avif-note');
   var losslessEl = document.getElementById('lossless');
   var sliderRow = document.getElementById('slider-row');
   var qualityEl = document.getElementById('quality');
@@ -254,49 +267,63 @@
     });
   }
 
-  // Lazily load the real libwebp encoder (vendored from @jsquash/webp, the
-  // same codec family Squoosh uses). It is loaded once and reused. If it
-  // fails to load for any reason, we fall back to the browser's built-in
-  // canvas WebP encoder so conversion always works.
-  var encoderPromise = null;
-  var encodeFn = null; // resolved libwebp encode(), or null when unavailable
+  // Real codecs vendored from @jsquash (the same family Squoosh uses), each
+  // loaded lazily and reused. WebP (~340 KB) is warmed up at startup; AVIF
+  // (~3.4 MB) is only fetched the first time someone actually picks it.
+  var FORMATS = {
+    webp: { mime: 'image/webp', ext: 'webp', module: './vendor/jsquash-webp/encode.js' },
+    avif: { mime: 'image/avif', ext: 'avif', module: './vendor/jsquash-avif/encode.js' }
+  };
+  var encoders = { webp: { promise: null, fn: null }, avif: { promise: null, fn: null } };
 
-  function loadEncoder() {
-    if (encoderPromise) return encoderPromise;
-    encoderPromise = import('./vendor/jsquash-webp/encode.js')
+  // Load and probe a format's encoder. Resolves to its encode() function, or
+  // null if it can't run here (WebP then falls back to the canvas encoder;
+  // AVIF has no fallback and will surface an error).
+  function loadEncoder(format) {
+    var slot = encoders[format];
+    if (slot.promise) return slot.promise;
+    slot.promise = import(FORMATS[format].module)
       .then(function (mod) {
-        // Probe with a 1x1 image so we fail fast and fall back if the wasm
-        // can't run here (e.g. a browser without WebAssembly SIMD support).
+        // Probe with a 1x1 image so we fail fast if the wasm can't run here
+        // (e.g. a browser without WebAssembly SIMD support).
         var probe = { data: new Uint8ClampedArray(4), width: 1, height: 1 };
         return mod.default(probe, { quality: 50 }).then(function () {
-          encodeFn = mod.default;
-          return encodeFn;
+          slot.fn = mod.default;
+          return slot.fn;
         });
       })
       .catch(function (err) {
-        console.warn('libwebp encoder unavailable, using canvas fallback:', err);
-        encodeFn = null;
+        console.warn(format + ' encoder unavailable:', err);
+        slot.fn = null;
         return null;
       });
-    return encoderPromise;
+    return slot.promise;
   }
 
-  // Encode a fully-drawn canvas to a WebP Blob.
+  // Encode a fully-drawn canvas to the chosen format, returning a Blob.
   function encodeCanvas(canvas, opts) {
-    return loadEncoder().then(function (encode) {
+    var format = opts.format;
+    var info = FORMATS[format];
+    return loadEncoder(format).then(function (encode) {
       if (encode) {
-        // Real libwebp path — gives genuine lossless and Squoosh-grade lossy.
+        // Real libwebp / libavif path — genuine lossless and high-quality lossy.
         var ctx = canvas.getContext('2d');
         var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        var options = opts.lossless
-          ? { lossless: 1 }            // pixel-perfect, no quality loss
-          : { quality: opts.quality }; // high-quality lossy
+        var options;
+        if (opts.lossless) {
+          options = format === 'avif' ? { lossless: true } : { lossless: 1 };
+        } else {
+          options = { quality: opts.quality };
+        }
         return encode(imageData, options).then(function (buf) {
-          return new Blob([buf], { type: 'image/webp' });
+          return new Blob([buf], { type: info.mime });
         });
       }
-      // Fallback: native canvas encoder. Note this cannot do true lossless,
-      // so the lossless option degrades to maximum-quality lossy here.
+      // No real encoder available. WebP can fall back to the browser's canvas
+      // encoder (no true lossless there); AVIF cannot be encoded by canvas.
+      if (format !== 'webp') {
+        throw new Error('AVIF encoding is not supported in this browser');
+      }
       var q = opts.lossless ? 1 : opts.quality / 100;
       return new Promise(function (resolve, reject) {
         canvas.toBlob(function (blob) {
@@ -307,8 +334,8 @@
     });
   }
 
-  // Convert a File to a WebP Blob at full resolution (no downscaling).
-  function convertToWebp(file, opts) {
+  // Convert a File to the chosen format at full resolution (no downscaling).
+  function convertImage(file, opts) {
     return loadImage(file).then(function (img) {
       var canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth;
@@ -363,6 +390,7 @@
     render();
 
     var opts = {
+      format: formatEl.value,
       lossless: losslessEl.checked,
       quality: Number(qualityEl.value)
     };
@@ -370,8 +398,9 @@
     var chain = Promise.resolve();
     pending.forEach(function (item) {
       chain = chain.then(function () {
-        return convertToWebp(item.file, opts).then(function (blob) {
+        return convertImage(item.file, opts).then(function (blob) {
           item.status = 'done';
+          item.format = opts.format;
           item.outputBlob = blob;
           item.outputUrl = URL.createObjectURL(blob);
           item.outputSize = blob.size;
@@ -388,9 +417,10 @@
     chain.then(function () { isConverting = false; render(); });
   }
 
-  // Map a source filename to its .webp output name.
-  function webpName(name) {
-    return name.replace(/\.(jpe?g|png)$/i, '') + '.webp';
+  // Map a source filename to its output name, using the item's chosen format.
+  function outputName(item) {
+    var ext = (FORMATS[item.format] || FORMATS.webp).ext;
+    return item.name.replace(/\.(jpe?g|png)$/i, '') + '.' + ext;
   }
 
   // Trigger a browser download for a blob URL.
@@ -405,7 +435,7 @@
 
   function downloadItem(item) {
     if (!item.outputUrl) return;
-    triggerDownload(item.outputUrl, webpName(item.name));
+    triggerDownload(item.outputUrl, outputName(item));
   }
 
   // Option 1: download each converted file individually.
@@ -528,10 +558,13 @@
     // Ensure unique names inside the archive (e.g. two "photo.webp").
     var usedNames = {};
     function uniqueName(base) {
+      var dot = base.lastIndexOf('.');
+      var stem = dot === -1 ? base : base.slice(0, dot);
+      var ext = dot === -1 ? '' : base.slice(dot);
       var name = base;
       var n = 1;
       while (usedNames[name.toLowerCase()]) {
-        name = base.replace(/\.webp$/i, '') + ' (' + (n++) + ').webp';
+        name = stem + ' (' + (n++) + ')' + ext;
       }
       usedNames[name.toLowerCase()] = true;
       return name;
@@ -543,7 +576,7 @@
 
     Promise.all(doneItems.map(function (item) {
       return item.outputBlob.arrayBuffer().then(function (buf) {
-        return { name: uniqueName(webpName(item.name)), data: new Uint8Array(buf) };
+        return { name: uniqueName(outputName(item)), data: new Uint8Array(buf) };
       });
     })).then(function (entries) {
       var zipBlob = buildZip(entries);
@@ -587,7 +620,9 @@
 
     // Buttons
     convertBtn.disabled = isConverting || items.length === 0;
-    convertBtn.textContent = isConverting ? 'Converting…' : 'Convert to WebP';
+    convertBtn.textContent = isConverting
+      ? 'Converting…'
+      : 'Convert to ' + formatEl.value.toUpperCase();
     downloadAllBtn.classList.toggle('hidden', doneItems.length === 0);
     downloadAllBtn.textContent = 'Download all (' + doneItems.length + ')';
     downloadZipBtn.classList.toggle('hidden', doneItems.length === 0);
@@ -706,6 +741,15 @@
     e.target.value = '';
   });
 
+  formatEl.addEventListener('change', function () {
+    var isAvif = formatEl.value === 'avif';
+    avifNote.classList.toggle('hidden', !isAvif);
+    // Start fetching the heavier AVIF encoder as soon as it's chosen, so it's
+    // ready by the time the user clicks Convert.
+    if (isAvif) loadEncoder('avif');
+    render();
+  });
+
   losslessEl.addEventListener('change', function () {
     sliderRow.classList.toggle('disabled', losslessEl.checked);
     qualityEl.disabled = losslessEl.checked;
@@ -728,7 +772,8 @@
   render();
 
   // Warm up the WebP encoder in the background so the first conversion is fast.
-  loadEncoder();
+  // AVIF is heavier (~3.4 MB) and only loaded on demand when selected.
+  loadEncoder('webp');
 })();
 </script>
 </body>
