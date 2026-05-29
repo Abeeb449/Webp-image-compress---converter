@@ -118,9 +118,19 @@
   /* List */
   .list { list-style: none; margin: 24px 0 0; padding: 0; }
   .list-item {
-    display: flex; align-items: center; gap: 16px;
+    display: flex; align-items: center; gap: 12px;
     padding: 12px 0; border-bottom: 1px solid #eee;
   }
+  .list-item.dragging { opacity: 0.4; }
+  .list-item.drop-before { box-shadow: inset 0 2px 0 0 var(--black); }
+  .list-item.drop-after { box-shadow: inset 0 -2px 0 0 var(--black); }
+  .grip {
+    flex-shrink: 0; cursor: grab; color: #c4c4c4; font-size: 18px;
+    line-height: 1; user-select: none; padding: 0 2px;
+  }
+  .grip:active { cursor: grabbing; }
+  .list-item[draggable="true"]:hover .grip { color: #888; }
+  .grip.disabled { cursor: default; opacity: 0.4; }
   .thumb {
     width: 48px; height: 48px; border-radius: 4px; object-fit: cover;
     background-color: #f3f3f3; border: 1px solid var(--border); flex-shrink: 0;
@@ -668,15 +678,78 @@
     });
   }
 
-  function removeItem(id) {
-    var idx = -1;
+  function indexOfId(id) {
     for (var i = 0; i < items.length; i++) {
-      if (items[i].id === id) { idx = i; break; }
+      if (items[i].id === id) return i;
     }
+    return -1;
+  }
+
+  function removeItem(id) {
+    var idx = indexOfId(id);
     if (idx === -1) return;
     if (items[idx].outputUrl) URL.revokeObjectURL(items[idx].outputUrl);
     items.splice(idx, 1);
     render();
+  }
+
+  // --- Drag-to-reorder ---
+  var dragId = null;
+
+  // Move the dragged item to just before/after the target item.
+  function moveItem(srcId, targetId, after) {
+    if (srcId === targetId) return;
+    var from = indexOfId(srcId);
+    if (from === -1) return;
+    var moved = items.splice(from, 1)[0];
+    var to = indexOfId(targetId);
+    if (to === -1) { items.splice(from, 0, moved); return; } // target gone; undo
+    items.splice(after ? to + 1 : to, 0, moved);
+    render();
+  }
+
+  function clearDropMarkers() {
+    var nodes = listEl.querySelectorAll('.drop-before, .drop-after');
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.remove('drop-before', 'drop-after');
+    }
+  }
+
+  function wireDragHandlers(li, item) {
+    li.addEventListener('dragstart', function (e) {
+      if (isConverting) { e.preventDefault(); return; }
+      dragId = item.id;
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragover', function (e) {
+      if (dragId === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var rect = li.getBoundingClientRect();
+      var after = (e.clientY - rect.top) > rect.height / 2;
+      li.classList.toggle('drop-after', after);
+      li.classList.toggle('drop-before', !after);
+    });
+    li.addEventListener('dragleave', function () {
+      li.classList.remove('drop-before', 'drop-after');
+    });
+    li.addEventListener('drop', function (e) {
+      if (dragId === null) return;
+      e.preventDefault();
+      var rect = li.getBoundingClientRect();
+      var after = (e.clientY - rect.top) > rect.height / 2;
+      var src = dragId;
+      dragId = null;
+      clearDropMarkers();
+      moveItem(src, item.id, after);
+    });
+    li.addEventListener('dragend', function () {
+      dragId = null;
+      li.classList.remove('dragging');
+      clearDropMarkers();
+    });
   }
 
   function clearAll() {
@@ -727,6 +800,16 @@
     items.forEach(function (item) {
       var li = document.createElement('li');
       li.className = 'list-item';
+      // Drag-to-reorder (disabled while converting).
+      li.draggable = !isConverting;
+      wireDragHandlers(li, item);
+
+      // Grip handle (visual affordance for dragging)
+      var grip = document.createElement('span');
+      grip.className = 'grip' + (isConverting ? ' disabled' : '');
+      grip.setAttribute('aria-hidden', 'true');
+      grip.textContent = '⠿';
+      li.appendChild(grip);
 
       // Thumb
       if (item.outputUrl) {
