@@ -179,6 +179,19 @@
       <input type="range" id="quality" class="slider" min="1" max="100" value="80" />
       <span class="quality-value" id="quality-value">80</span>
     </div>
+    <label class="checkbox-row" style="margin: 20px 0;">
+      <input type="checkbox" id="resize" />
+      <span><strong>Resize large images</strong> &ndash; shrink oversized photos to cut file size much further</span>
+    </label>
+    <div class="slider-row disabled" id="maxdim-row">
+      <label class="slider-label" for="maxdim">Max width/height</label>
+      <select id="maxdim" class="slider" disabled>
+        <option value="1280">1280 px</option>
+        <option value="1920" selected>1920 px</option>
+        <option value="2560">2560 px</option>
+        <option value="3840">3840 px</option>
+      </select>
+    </div>
   </div>
 
   <div class="actions">
@@ -215,6 +228,9 @@
   var sliderRow = document.getElementById('slider-row');
   var qualityEl = document.getElementById('quality');
   var qualityValueEl = document.getElementById('quality-value');
+  var resizeEl = document.getElementById('resize');
+  var maxdimRow = document.getElementById('maxdim-row');
+  var maxdimEl = document.getElementById('maxdim');
   var convertBtn = document.getElementById('convert-btn');
   var downloadAllBtn = document.getElementById('download-all-btn');
   var clearBtn = document.getElementById('clear-btn');
@@ -254,11 +270,29 @@
   // Convert a File to a WebP Blob using the canvas API.
   function convertToWebp(file, opts) {
     return loadImage(file).then(function (img) {
+      var w = img.naturalWidth;
+      var h = img.naturalHeight;
+
+      // Optionally downscale oversized images — the single biggest lever for
+      // shrinking output. Aspect ratio is preserved; only the longest side is
+      // capped, and we never upscale.
+      if (opts.resize && opts.maxDim > 0) {
+        var longest = Math.max(w, h);
+        if (longest > opts.maxDim) {
+          var scale = opts.maxDim / longest;
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+      }
+
       var canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      canvas.width = w;
+      canvas.height = h;
       var ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
+      // High-quality resampling keeps downscaled images crisp.
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
       if (img._objectUrl) URL.revokeObjectURL(img._objectUrl);
       var q = opts.lossless ? 1 : opts.quality / 100;
       return new Promise(function (resolve, reject) {
@@ -312,7 +346,12 @@
     showError('');
     render();
 
-    var opts = { lossless: losslessEl.checked, quality: Number(qualityEl.value) };
+    var opts = {
+      lossless: losslessEl.checked,
+      quality: Number(qualityEl.value),
+      resize: resizeEl.checked,
+      maxDim: Number(maxdimEl.value)
+    };
 
     var chain = Promise.resolve();
     pending.forEach(function (item) {
@@ -496,6 +535,11 @@
   losslessEl.addEventListener('change', function () {
     sliderRow.classList.toggle('disabled', losslessEl.checked);
     qualityEl.disabled = losslessEl.checked;
+  });
+
+  resizeEl.addEventListener('change', function () {
+    maxdimRow.classList.toggle('disabled', !resizeEl.checked);
+    maxdimEl.disabled = !resizeEl.checked;
   });
 
   qualityEl.addEventListener('input', function () {
