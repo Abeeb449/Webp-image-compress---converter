@@ -886,9 +886,44 @@
     }, 1500);
   }
 
+  // Mobile browsers (iOS Safari in particular) only allow one programmatic
+  // download per user gesture, so clicking Download on several images only saves
+  // the first. Detect mobile-like devices so we can route them through the
+  // native share/save sheet, which works reliably for each image.
+  function isMobileLike() {
+    var ua = navigator.userAgent || '';
+    if (/Android|iPhone|iPod/i.test(ua)) return true;
+    if (/iPad/i.test(ua)) return true;
+    // iPadOS reports as desktop Safari but exposes touch points.
+    if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;
+    return false;
+  }
+
+  // Label the per-image action to match how it behaves on this device.
+  var SAVE_LABEL = isMobileLike() ? 'Save' : 'Download';
+  var SAVED_LABEL = isMobileLike() ? '✓ Saved' : '✓ Downloaded';
+
   function downloadItem(item) {
     if (!item.outputBlob) return;
-    triggerDownload(item.outputBlob, outputName(item));
+    var name = outputName(item);
+
+    // Mobile: open the native share/save sheet (Save to Photos / Files). Each
+    // call is its own gesture, so every image can be saved independently.
+    if (isMobileLike()) {
+      var file = null;
+      try {
+        file = new File([item.outputBlob], name, { type: item.outputBlob.type || 'image/webp' });
+      } catch (e) { file = null; }
+      if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] })
+          .then(function () { item.downloaded = true; render(); })
+          .catch(function () { /* dismissed or unavailable: let the user retry */ });
+        return;
+      }
+    }
+
+    // Desktop (and mobile browsers without file sharing): direct download.
+    triggerDownload(item.outputBlob, name);
     item.downloaded = true;
     render();
   }
@@ -1236,14 +1271,14 @@
         if (item.downloaded) {
           var doneTag = document.createElement('span');
           doneTag.className = 'downloaded-tag';
-          doneTag.setAttribute('title', 'Downloaded');
-          doneTag.textContent = '✓ Downloaded';
+          doneTag.setAttribute('title', SAVED_LABEL);
+          doneTag.textContent = SAVED_LABEL;
           actions.appendChild(doneTag);
         } else {
           var dl = document.createElement('button');
           dl.className = 'download-btn';
           dl.type = 'button';
-          dl.textContent = 'Download';
+          dl.textContent = SAVE_LABEL;
           dl.addEventListener('click', function () { downloadItem(item); });
           actions.appendChild(dl);
         }
