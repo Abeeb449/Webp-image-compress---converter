@@ -406,8 +406,7 @@
 
   <div class="actions">
     <button class="btn btn-primary" id="convert-btn" disabled>Convert to WebP</button>
-    <button class="btn btn-secondary hidden" id="download-all-btn">Download all</button>
-    <button class="btn btn-secondary hidden" id="download-zip-btn">Download ZIP</button>
+    <button class="btn btn-secondary hidden" id="download-zip-btn">Download all (.zip)</button>
     <button class="btn btn-secondary hidden" id="clear-btn">Clear</button>
   </div>
 
@@ -415,7 +414,7 @@
 
   <ul class="list" id="list"></ul>
 
-  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: universal-download</span></footer>
+  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: zip-bulk</span></footer>
 </div>
 
 <div class="modal-overlay hidden" id="compare-modal">
@@ -468,7 +467,6 @@
   var flipVBtn = document.getElementById('flip-v');
   var xformStateEl = document.getElementById('xform-state');
   var convertBtn = document.getElementById('convert-btn');
-  var downloadAllBtn = document.getElementById('download-all-btn');
   var downloadZipBtn = document.getElementById('download-zip-btn');
   var clearBtn = document.getElementById('clear-btn');
   var summaryEl = document.getElementById('summary');
@@ -896,14 +894,6 @@
     render();
   }
 
-  // Option 1: download each converted file individually.
-  function downloadAll() {
-    items.filter(function (it) { return it.status === 'done'; })
-      .forEach(function (item, idx) {
-        setTimeout(function () { downloadItem(item); }, idx * 300);
-      });
-  }
-
   // --- Minimal ZIP writer (STORE / no compression) -------------------------
   // WebP is already compressed, so storing the bytes verbatim avoids a
   // redundant deflate pass and keeps this dependency-free.
@@ -1044,7 +1034,7 @@
     }).then(function () {
       isZipping = false;
       downloadZipBtn.disabled = false;
-      downloadZipBtn.textContent = 'Download ZIP (' + doneItems.length + ')';
+      downloadZipBtn.textContent = 'Download all (.zip) (' + doneItems.length + ')';
     });
   }
 
@@ -1142,13 +1132,11 @@
     convertBtn.textContent = isConverting
       ? 'Converting…'
       : 'Convert to ' + formatEl.value.toUpperCase();
-    downloadAllBtn.classList.toggle('hidden', doneItems.length === 0);
-    downloadAllBtn.textContent = 'Download all (' + doneItems.length + ')';
     downloadZipBtn.classList.toggle('hidden', doneItems.length === 0);
     // Leave the ZIP button alone while it's actively zipping.
     if (!isZipping) {
       downloadZipBtn.disabled = isConverting;
-      downloadZipBtn.textContent = 'Download ZIP (' + doneItems.length + ')';
+      downloadZipBtn.textContent = 'Download all (.zip) (' + doneItems.length + ')';
     }
     clearBtn.classList.toggle('hidden', items.length === 0);
     clearBtn.disabled = isConverting;
@@ -1353,7 +1341,6 @@
   });
 
   convertBtn.addEventListener('click', convertAll);
-  downloadAllBtn.addEventListener('click', downloadAll);
   downloadZipBtn.addEventListener('click', downloadZip);
   clearBtn.addEventListener('click', clearAll);
 
