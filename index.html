@@ -36,6 +36,7 @@
     --border: #e8e8e8;
     --bg: #fafafa;
     --green: #2b8a3e;
+    --green-faded: #b6d8bf;
     --red: #e03131;
   }
 
@@ -65,7 +66,7 @@
 
   /* Dropzone */
   .dropzone {
-    border: 2px dashed var(--light-gray);
+    border: 2px dashed var(--green-faded);
     border-radius: 8px;
     background-color: var(--bg);
     padding: 40px 24px;
@@ -74,9 +75,10 @@
     transition: border-color 0.2s ease, background-color 0.2s ease;
     outline: none;
   }
+  .dropzone.has-images,
   .dropzone:hover, .dropzone:focus-visible,
   .dropzone.dragging {
-    border-color: var(--black);
+    border-color: var(--green);
     background-color: #f4f4f4;
   }
   .dropzone::before {
@@ -184,10 +186,10 @@
     text-transform: uppercase; letter-spacing: 0.05em;
     transition: all 0.2s ease;
   }
-  .btn-primary { background: var(--black); color: #fff; }
+  .btn-primary { background: var(--green); color: #fff; border-color: var(--green); }
   .btn-primary:hover:not(:disabled) {
-    background: #000; border-color: #000;
-    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    background: #247934; border-color: #247934;
+    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(43, 138, 62, 0.25);
   }
   .btn-secondary { background: #fff; color: var(--black); }
   .btn-secondary:hover:not(:disabled) {
@@ -414,7 +416,7 @@
 
   <ul class="list" id="list"></ul>
 
-  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: zip-bulk</span></footer>
+  <footer>Runs entirely in your browser. No images are uploaded anywhere. <span style="opacity:0.7">· build: green-accent</span></footer>
 </div>
 
 <div class="modal-overlay hidden" id="compare-modal">
@@ -1126,6 +1128,9 @@
     var doneItems = items.filter(function (it) { return it.status === 'done'; });
     var totalInput = items.reduce(function (s, it) { return s + it.inputSize; }, 0);
     var totalOutput = doneItems.reduce(function (s, it) { return s + it.outputSize; }, 0);
+
+    // Dropzone brightens its border once images are added.
+    dropzone.classList.toggle('has-images', items.length > 0);
 
     // Buttons
     convertBtn.disabled = isConverting || items.length === 0;
